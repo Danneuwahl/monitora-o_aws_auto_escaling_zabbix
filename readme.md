@@ -1,26 +1,32 @@
-📑Documentação Técnica: Monitoramento AWS ASG (Zabbix 7.0)
+# AWS Auto Scaling Groups (ASG) Monitoring with Zabbix 7.0
 
-1. Configuração de Coleta (Backend)
+Este projeto oferece uma solução robusta para monitorar as atividades de múltiplos **Auto Scaling Groups (ASG)** da AWS através de um Zabbix Agent rodando em Rocky Linux 9. A solução utiliza Descoberta de Baixo Nível (LLD) para criar itens e gráficos automaticamente para cada grupo identificado.
 
-Para que o Zabbix diferencie os grupos de Auto Scaling, o Agente deve ler o JSON bruto.
+## 🚀 Funcionalidades
 
-Arquivo de Dados: /home/daniel/teste.txt
+- **Descoberta Automática (LLD):** Identifica dinamicamente novos grupos de ASG.
+- **Deduplicação de Dados:** Script JavaScript integrado para garantir que apenas um item seja criado por grupo, mesmo com múltiplas entradas no JSON.
+- **Gráficos de Status:** Conversão de status textual para numérico, permitindo a visualização de histórico em gráficos.
+- **Eficiência:** Itens dependentes reduzem a carga no servidor, lendo o arquivo de origem apenas uma vez por ciclo.
 
-UserParameter (Rocky Linux): No arquivo /etc/zabbix/zabbix_agentd.d/aws_asg.conf:
+## 🛠️ Configuração no Servidor (Rocky Linux 9)
 
-Bash
+O Zabbix Agent precisa de acesso ao arquivo JSON gerado pela AWS (ou simulado).
 
-UserParameter=aws.asg.discovery,cat /home/daniel/teste.txt
+1. **Arquivo de Dados:** Certifique-se de que o arquivo está no caminho `/home/daniel/teste.txt`.
+2. **UserParameter:** Adicione a seguinte linha ao arquivo `/etc/zabbix/zabbix_agentd.d/aws_asg.conf`:
+   ```bash
+   UserParameter=aws.asg.discovery,cat /home/daniel/teste.txt
 
-Aplicação: sudo systemctl restart zabbix-agent
+   Reinicialização: ```bash
+3- sudo systemctl restart zabbix-agent
 
-2. Ajuste de Grupos na Regra LLD (Tratamento de Duplicidade)
+⚙️ Configuração do Zabbix (Template)
+1. Regra de Descoberta (LLD)
+A regra utiliza um filtro JavaScript para extrair nomes únicos de grupos do campo AutoScalingGroupName.
 
-Quando o arquivo contém múltiplas atividades para o mesmo grupo, o Zabbix gera erro de "item já existe". Para separar por nome de grupo de forma única:
+Script de Pré-processamento:
 
-Pré-processamento da Regra LLD: Adicione um passo JavaScript na regra de descoberta:
-
-JavaScript
 var data = JSON.parse(value);
 var uniqueNames = {};
 var result = [];
@@ -33,132 +39,43 @@ for (var i = 0; i < data.length; i++) {
 }
 return JSON.stringify(result);
 
-Mapeamento de Macro: No campo LLD Macro Paths, associe {#ASG_NAME} ao caminho $.AutoScalingGroupName.
+2. Conversão para Gráficos
+Para que o Zabbix gere gráficos, o status é convertido em valores binários:
 
-3. Conversão de Dados para Gráficos
+Successful ➔ 1
 
-O Zabbix não gera gráficos de linha para textos. Convertemos o status para valores numéricos:
+Failed ➔ 0
 
-Value Mapping: Crie um mapeamento chamado AWS ASG Status:
+Mapeamento de Valor (Value Mapping):
+| Valor | Texto |
+| :--- | :--- |
+| 1 | Successful |
+| 0 | Failed |
 
-1 → Successful
+📊 Como Visualizar os Gráficos
+Após a descoberta, vá em Monitoring > Latest Data.
 
-0 → Failed
+Filtre pelo host e procure por ASG [Nome do Grupo]: Last Event Status.
 
-JavaScript no Item Prototype: No pré-processamento do item de status, adicione:
+Os gráficos automáticos estarão disponíveis em Graph Prototypes dentro do Host ou através de Widgets de Dashboard.
 
-JavaScript
+📥 Importação do Template
+No menu lateral do Zabbix, vá em Data collection > Templates.
 
-return (value === 'Successful') ? 1 : 0;
-Tipo de Informação: Altere o protótipo para Numeric (unsigned).
+Clique em Import e selecione o arquivo .yaml disponibilizado neste repositório.
 
-4. Criação de Graph Prototypes (Passo a Passo)
-Com os itens convertidos para números, siga estes passos para gerar os gráficos automáticos:
+Certifique-se de que a versão do seu Zabbix é 7.0 LTS ou superior.
 
-Acesse Data collection > Templates e abra o template.
+📄 Exemplo de Estrutura do Arquivo JSON (teste.txt)
 
-Entre em Discovery rules e clique em Graph prototypes.
+{
+    "Activities": [
+        {
+            "AutoScalingGroupName": "Producao-WebService",
+            "StatusCode": "Successful",
+            "Description": "Terminating instance: i-0abc123"
+        }
+    ]
+}
 
-Clique em Create graph prototype.
-
-Configurações:
-
-Name: Status de Escalonamento: {#ASG_NAME}
-
-Width/Height: 900x200 (recomendado).
-
-Adicionar Itens:
-
-Clique em Add.
-
-Na janela de seleção, clique no link Item prototypes no topo direito.
-
-Selecione ASG [{#ASG_NAME}]: Last Event Status.
-
-Salvar: Clique em Add para finalizar. O Zabbix criará um gráfico para cada grupo novo descoberto.
-
-
-5. YAML do Template Completo (Zabbix 7.0)
-
-zabbix_export:
-  version: '7.0'
-  template_groups:
-    - uuid: 7f83353840664190a7960306114a7065
-      name: 'Templates/Cloud'
-  templates:
-    - uuid: 550e8400e29b41d4a716446655440000
-      template: 'AWS Auto Scaling by Group Discovery'
-      name: 'AWS Auto Scaling by Group Discovery'
-      groups:
-        - name: 'Templates/Cloud'
-      items:
-        - uuid: 9b20727c3677495287001c3127885994
-          name: 'ASG: Get Raw Data'
-          key: aws.asg.discovery
-          history: 1d
-          trends: '0'
-          value_type: TEXT
-      discovery_rules:
-        - uuid: f47ac10b58cc4372a5670e02b2c3d479
-          name: 'ASG Group Discovery'
-          type: DEPENDENT
-          key: aws.asg.groups.discovery
-          master_item:
-            key: aws.asg.discovery
-          lld_macro_paths:
-            - lld_macro: '{#ASG_NAME}'
-              path: '$.AutoScalingGroupName'
-          preprocessing:
-            - type: JSONPATH
-              parameters:
-                - '$.Activities'
-            - type: JAVASCRIPT
-              parameters:
-                - |
-                  var data = JSON.parse(value);
-                  var uniqueNames = {};
-                  var result = [];
-                  for (var i = 0; i < data.length; i++) {
-                      var name = data[i].AutoScalingGroupName;
-                      if (!uniqueNames[name]) {
-                          uniqueNames[name] = true;
-                          result.push(data[i]);
-                      }
-                  }
-                  return JSON.stringify(result);
-          item_prototypes:
-            - uuid: 2f0e8445312a4f51872e06778f697412
-              name: 'ASG [{#ASG_NAME}]: Last Event Status'
-              type: DEPENDENT
-              key: 'aws.asg.status[{#ASG_NAME}]'
-              master_item:
-                key: aws.asg.discovery
-              value_type: UINT64
-              valuemap:
-                name: 'AWS ASG Status'
-              preprocessing:
-                - type: JSONPATH
-                  parameters:
-                    - '$.Activities[?(@.AutoScalingGroupName == "{#ASG_NAME}")].StatusCode.first()'
-                - type: JAVASCRIPT
-                  parameters:
-                    - "return (value === 'Successful') ? 1 : 0;"
-                - type: DISCARD_UNCHANGED_HEARTBEAT
-                  parameters:
-                    - 1h
-          graph_prototypes:
-            - uuid: a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
-              name: 'Status de Escalonamento: {#ASG_NAME}'
-              graph_items:
-                - color: 1A7C11
-                  item:
-                    host: 'AWS Auto Scaling by Group Discovery'
-                    key: 'aws.asg.status[{#ASG_NAME}]'
-  value_maps:
-    - uuid: b1c2d3e4f5g6h7i8j9k0l1m2n3o4p5q6
-      name: 'AWS ASG Status'
-      mappings:
-        - value: '1'
-          newvalue: Successful
-        - value: '0'
-          newvalue: Failed
+Desenvolvido por: Daniel
