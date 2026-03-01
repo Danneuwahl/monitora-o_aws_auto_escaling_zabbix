@@ -1,35 +1,39 @@
 # AWS Auto Scaling Groups (ASG) Monitoring with Zabbix 7.0
 
-Este projeto oferece uma solução robusta para monitorar as atividades de múltiplos **Auto Scaling Groups (ASG)** da AWS através de um Zabbix Agent rodando em Rocky Linux 9. A solução utiliza Descoberta de Baixo Nível (LLD) para criar itens e gráficos automaticamente para cada grupo identificado.
+Este projeto fornece uma solução completa para monitorar múltiplos **Auto Scaling Groups (ASG)** da AWS utilizando o Zabbix Agent. A solução utiliza Descoberta de Baixo Nível (LLD) para separar os dados por grupo, trata duplicidades de registros no JSON e converte status de texto em dados numéricos para geração de gráficos.
 
 ## 🚀 Funcionalidades
 
-- **Descoberta Automática (LLD):** Identifica dinamicamente novos grupos de ASG.
-- **Deduplicação de Dados:** Script JavaScript integrado para garantir que apenas um item seja criado por grupo, mesmo com múltiplas entradas no JSON.
-- **Gráficos de Status:** Conversão de status textual para numérico, permitindo a visualização de histórico em gráficos.
-- **Eficiência:** Itens dependentes reduzem a carga no servidor, lendo o arquivo de origem apenas uma vez por ciclo.
+* **Descoberta Automática (LLD):** Identifica dinamicamente cada ASG Group no arquivo de log.
+* **Tratamento de Duplicidade:** Script JavaScript integrado para processar apenas uma entrada por grupo, evitando erros de chaves duplicadas.
+* **Gráficos Dinâmicos:** Conversão de status (`Successful`/`Failed`) para valores binários (`1`/`0`).
+* **Eficiência de Dados:** Uso de Itens Dependentes para ler o arquivo apenas uma vez por ciclo de coleta.
 
 ## 🛠️ Configuração no Servidor (Rocky Linux 9)
 
-O Zabbix Agent precisa de acesso ao arquivo JSON gerado pela AWS (ou simulado).
+No servidor onde reside o arquivo de log da AWS, siga os passos:
 
-1. **Arquivo de Dados:** Certifique-se de que o arquivo está no caminho `/home/daniel/teste.txt`.
-2. **UserParameter:** Adicione a seguinte linha ao arquivo `/etc/zabbix/zabbix_agentd.d/aws_asg.conf`:
-   ```bash
-   UserParameter=aws.asg.discovery,cat /home/daniel/teste.txt
+1.  **Localize o arquivo de dados:** Certifique-se de que o arquivo esteja em `/home/daniel/teste.txt`.
+2.  **Configure o UserParameter:**
+    Crie ou edite o arquivo `/etc/zabbix/zabbix_agentd.d/aws_asg.conf`:
+    ```bash
+    UserParameter=aws.asg.discovery,cat /home/daniel/teste.txt
+    ```
+3.  **Reinicie o Agente:**
+    ```bash
+    sudo systemctl restart zabbix-agent
+    ```
 
-   Reinicialização: ```bash
-3- sudo systemctl restart zabbix-agent
+## ⚙️ Configuração do Template (Zabbix Web)
 
-⚙️ Configuração do Zabbix (Template)
-1. Regra de Descoberta (LLD)
-A regra utiliza um filtro JavaScript para extrair nomes únicos de grupos do campo AutoScalingGroupName.
+### 1. Tratamento de Unicidade (LLD)
+Para evitar o erro de itens duplicados, a **Discovery Rule** utiliza o seguinte processamento JavaScript na aba **Preprocessing**:
 
-Script de Pré-processamento:
-
+```javascript
 var data = JSON.parse(value);
 var uniqueNames = {};
 var result = [];
+
 for (var i = 0; i < data.length; i++) {
     var name = data[i].AutoScalingGroupName;
     if (!uniqueNames[name]) {
@@ -66,16 +70,21 @@ Clique em Import e selecione o arquivo .yaml disponibilizado neste repositório.
 
 Certifique-se de que a versão do seu Zabbix é 7.0 LTS ou superior.
 
-📄 Exemplo de Estrutura do Arquivo JSON (teste.txt)
-
-{
-    "Activities": [
-        {
-            "AutoScalingGroupName": "Producao-WebService",
-            "StatusCode": "Successful",
-            "Description": "Terminating instance: i-0abc123"
-        }
-    ]
-}
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 7f83353840664190a7960306114a7065
+      name: 'Templates/Cloud'
+  templates:
+    - uuid: 550e8400e29b41d4a716446655440000
+      template: 'AWS Auto Scaling by Group Discovery'
+      name: 'AWS Auto Scaling by Group Discovery'
+      groups:
+        - name: 'Templates/Cloud'
+      items:
+        - uuid: 9b20727c3677495287001c3127885994
+          name: 'ASG: Get Raw Data'
+          key: aws.asg.discovery
+          value_type: TEXT
 
 Desenvolvido por: Daniel
